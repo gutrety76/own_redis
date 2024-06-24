@@ -7,6 +7,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{interval, Duration};
 use parser::{parse_command, RedisCommand};
 use std::sync::{Arc, Mutex};
+use rand::random;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,24 +16,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Server running on 127.0.0.1:6379");
 
     let db = Arc::new(Mutex::new(db::Db::new()));
-
-
-    let db = db.clone();
-    tokio::spawn(async move {
-        let mut interval = interval(Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            let mut db = db.lock().unwrap();
-            db.remove_expired();
-        }
-    });
-
-
+    db.lock().unwrap().get_snap().expect("TODO: panic message");
+    db.clear_poison();
+    {
+        let db = db.clone();
+        tokio::spawn(async move {
+            let mut interval = interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let mut db = db.lock().unwrap();
+                db.remove_expired();
+            }
+        });
+    }
+    {
+        let db = db.clone();
+        tokio::spawn(async move {
+            let mut interval = interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let mut db = db.lock().unwrap();
+                db.make_snap();
+            }
+        });
+    }
     loop {
-        // Accept new incoming connections
+
         let (socket, _) = listener.accept().await?;
         let db = db.clone();
-        // Spawn a new task for each connection
+
         tokio::spawn(async move {
             handle_connection(socket, db).await;
         });
@@ -57,7 +69,13 @@ async fn handle_connection(mut socket: TcpStream, db: Arc<Mutex<db::Db>>) {
             let mut db = db.lock().unwrap();
             match command {
                 RedisCommand::Get(key) => db.get(&key),
-                RedisCommand::Set(key, value) => db.set(key, value, Some(Duration::from_secs(10))), // Set TTL to 60 seconds for example
+                RedisCommand::Set(key, value, expired) => {
+                    let ttl = expired
+                        .as_deref()
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .map(Duration::from_secs)
+                        .unwrap_or_else(|| Duration::from_secs(1000));
+                    db.set(key, value, Some(ttl))},
                 RedisCommand::Unknown => Err("Unknown command\n".to_string()),
             }
         };

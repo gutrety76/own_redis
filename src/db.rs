@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use serde_json::Value as JsonValue;
 use std::time::{Duration, SystemTime};
+use std::fs;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum DbValue {
     String(String, Option<SystemTime>),
     Int(i32, Option<SystemTime>),
@@ -48,9 +50,11 @@ pub struct Db {
 
 impl Db {
     pub fn new() -> Self {
+
         Db {
             values: HashMap::new(),
         }
+
     }
 
     pub fn set<V: Into<DbValue>>(&mut self, key: String, value: V, ttl: Option<Duration>) -> Result<String, String> {
@@ -61,6 +65,9 @@ impl Db {
             DbValue::Json(v, _) => DbValue::Json(v, expiration),
             DbValue::HashMap(v, _) => DbValue::HashMap(v, expiration),
         };
+        if self.values.contains_key(&key){
+            return Err("Key already in use\n".to_string())
+        }
         self.values.insert(key, db_value);
         Ok("OK\n".to_string())
     }
@@ -98,7 +105,41 @@ impl Db {
             None => Err("Key not found\n".to_string()),
         }
     }
-
+    pub fn make_snap(&self) -> Result<(), String> {
+        match serde_json::to_string(&self.values) {
+            Ok(serialized) => {
+                let path = "./save.rdb";
+                println!("Attempting to save to {}", path);
+                match fs::write(path, serialized) {
+                    Ok(_) => {
+                        println!("Successfully saved to {}", path);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to save to {}: {}", path, e);
+                        Err(e.to_string())
+                    }
+                }
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+    pub fn get_snap(&mut self) -> Result<(), String> {
+        let path = "./save.rdb";
+        match fs::read(path) {
+            Ok(data) => {
+                match serde_json::from_slice(&data) {
+                    Ok(values) => {
+                        println!("Loaded saved file with {:?}", values);
+                        self.values = values;
+                        Ok(())
+                    }
+                    Err(e) => Err(format!("Failed to deserialize data: {}", e)),
+                }
+            }
+            Err(e) => Err(format!("Failed to read file: {}", e)),
+        }
+    }
     fn is_expired(expiration: &Option<SystemTime>) -> bool {
         match expiration {
             Some(exp) => {

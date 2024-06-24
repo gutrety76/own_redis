@@ -1,6 +1,8 @@
+use std::str::FromStr;
+
 pub enum RedisCommand {
     Get(String),
-    Set(String, String),
+    Set(String, String, Option<String>),
     Unknown,
 }
 
@@ -10,7 +12,8 @@ pub fn parse_command(buffer: &[u8]) -> RedisCommand {
 
     match parts.as_slice() {
         ["GET", key] => RedisCommand::Get(key.to_string()),
-        ["SET", key, value] => RedisCommand::Set(key.to_string(), value.to_string()),
+        ["SET", key, value] => RedisCommand::Set(key.to_string(), value.to_string(), None),
+        ["SET", key, value, expired] => RedisCommand::Set(key.to_string(), value.to_string(), Some(expired.to_string())),
         _ => RedisCommand::Unknown,
     }
 }
